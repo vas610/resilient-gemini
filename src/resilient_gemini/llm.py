@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import random
 from typing import AsyncGenerator, FrozenSet, Optional
 
 import httpx
@@ -36,8 +37,9 @@ def is_retryable(exc: BaseException, codes: FrozenSet[int] = DEFAULT_RETRYABLE_C
 
 class RetryThenFallbackLlm(BaseLlm):
     """Calls ``primary`` up to ``max_attempts`` times, waiting ``step_seconds * n``
-    between tries (60s, 120s, 180s, ... by default). If every try fails with a
-    transient error, the same request is sent once to ``backup``.
+    plus up to ``step_jitter`` random seconds between tries (60s, 120s, 180s, ...
+    by default). If every try fails with a transient error, the same request is
+    sent once to ``backup``.
 
     Non-transient errors (400, 403, 404, ...) are raised immediately: retrying
     them would only waste time. A streamed response that has already produced
@@ -50,6 +52,7 @@ class RetryThenFallbackLlm(BaseLlm):
     backup_thinking: Optional[types.ThinkingLevel] = None
     max_attempts: int = 5
     step_seconds: float = 60.0
+    step_jitter: float = 0.0
     retryable_codes: FrozenSet[int] = DEFAULT_RETRYABLE_CODES
     priority_paygo: PriorityMode = PriorityMode.OFF
 
@@ -129,6 +132,8 @@ class RetryThenFallbackLlm(BaseLlm):
                 if attempt == self.max_attempts:
                     break
                 wait = self.step_seconds * attempt
+                if self.step_jitter:
+                    wait += random.uniform(0, self.step_jitter)
                 logger.warning(
                     "Primary model %s attempt %d/%d failed (%s). Retrying in %.0fs",
                     self.primary.model, attempt, self.max_attempts, exc, wait,

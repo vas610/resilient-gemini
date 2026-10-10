@@ -32,3 +32,6 @@ service-account*.json
 .vscode/
 .idea/
 .DS_Store
+
+# Jupyter
+.ipynb_checkpoints/
