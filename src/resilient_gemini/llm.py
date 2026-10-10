@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import random
-from typing import AsyncGenerator, FrozenSet, Optional
+from collections.abc import AsyncGenerator
 
 import httpx
 from google.adk.models.base_llm import BaseLlm
@@ -28,7 +28,7 @@ _sleep = asyncio.sleep
 _TRANSIENT_NETWORK_ERRORS = (httpx.TimeoutException, httpx.ConnectError, asyncio.TimeoutError)
 
 
-def is_retryable(exc: BaseException, codes: FrozenSet[int] = DEFAULT_RETRYABLE_CODES) -> bool:
+def is_retryable(exc: BaseException, codes: frozenset[int] = DEFAULT_RETRYABLE_CODES) -> bool:
     """True for transient API status codes and transient network failures."""
     if isinstance(exc, errors.APIError):
         return getattr(exc, "code", None) in codes
@@ -48,16 +48,16 @@ class RetryThenFallbackLlm(BaseLlm):
 
     primary: BaseLlm
     backup: BaseLlm
-    primary_thinking: Optional[types.ThinkingLevel] = None
-    backup_thinking: Optional[types.ThinkingLevel] = None
+    primary_thinking: types.ThinkingLevel | None = None
+    backup_thinking: types.ThinkingLevel | None = None
     max_attempts: int = 5
     step_seconds: float = 60.0
     step_jitter: float = 0.0
-    retryable_codes: FrozenSet[int] = DEFAULT_RETRYABLE_CODES
+    retryable_codes: frozenset[int] = DEFAULT_RETRYABLE_CODES
     priority_paygo: PriorityMode = PriorityMode.OFF
 
     # ------------------------------------------------------------------ helpers
-    def _prepare(self, req: LlmRequest, model: str, level: Optional[types.ThinkingLevel]) -> None:
+    def _prepare(self, req: LlmRequest, model: str, level: types.ThinkingLevel | None) -> None:
         req.model = model
         if req.config is None:
             req.config = types.GenerateContentConfig()
@@ -67,7 +67,9 @@ class RetryThenFallbackLlm(BaseLlm):
             self._add_priority_headers(req.config)
             logger.info(
                 "PRIORITY PAYGO (%s): request to %s is %s",
-                self.priority_paygo.value, model, PRIORITY_COST_NOTE,
+                self.priority_paygo.value,
+                model,
+                PRIORITY_COST_NOTE,
             )
 
     def _add_priority_headers(self, config: types.GenerateContentConfig) -> None:
@@ -89,11 +91,16 @@ class RetryThenFallbackLlm(BaseLlm):
             return
         name = getattr(traffic, "value", str(traffic))
         if "PRIORITY" in name:
-            logger.info("PRIORITY PAYGO: %s served at priority (traffic_type=%s), %s",
-                        model, name, PRIORITY_COST_NOTE)
+            logger.info(
+                "PRIORITY PAYGO: %s served at priority (traffic_type=%s), %s", model, name, PRIORITY_COST_NOTE
+            )
         elif name == "ON_DEMAND":
-            logger.warning("PRIORITY PAYGO: %s was downgraded to Standard PayGo "
-                           "(traffic_type=%s), billed at the standard rate", model, name)
+            logger.warning(
+                "PRIORITY PAYGO: %s was downgraded to Standard PayGo "
+                "(traffic_type=%s), billed at the standard rate",
+                model,
+                name,
+            )
         else:
             logger.info("PRIORITY PAYGO: %s traffic_type=%s", model, name)
 
@@ -111,7 +118,7 @@ class RetryThenFallbackLlm(BaseLlm):
     async def generate_content_async(
         self, llm_request: LlmRequest, stream: bool = False
     ) -> AsyncGenerator[LlmResponse, None]:
-        last_exc: Optional[BaseException] = None
+        last_exc: BaseException | None = None
 
         for attempt in range(1, self.max_attempts + 1):
             state = {"yielded": False}
@@ -122,7 +129,9 @@ class RetryThenFallbackLlm(BaseLlm):
                 if attempt > 1:
                     logger.info(
                         "Primary model %s succeeded on attempt %d/%d",
-                        self.primary.model, attempt, self.max_attempts,
+                        self.primary.model,
+                        attempt,
+                        self.max_attempts,
                     )
                 return
             except Exception as exc:
@@ -136,15 +145,22 @@ class RetryThenFallbackLlm(BaseLlm):
                     wait += random.uniform(0, self.step_jitter)
                 logger.warning(
                     "Primary model %s attempt %d/%d failed (%s). Retrying in %.0fs",
-                    self.primary.model, attempt, self.max_attempts, exc, wait,
+                    self.primary.model,
+                    attempt,
+                    self.max_attempts,
+                    exc,
+                    wait,
                 )
                 await _sleep(wait)
 
         logger.error(
             "FALLBACK: primary model %s failed %d times (last error: %s). "
             "Switching to backup model %s (thinking=%s)",
-            self.primary.model, self.max_attempts, last_exc,
-            self.backup.model, self.backup_thinking.name if self.backup_thinking else "default",
+            self.primary.model,
+            self.max_attempts,
+            last_exc,
+            self.backup.model,
+            self.backup_thinking.name if self.backup_thinking else "default",
             extra={
                 "resilient_gemini_event": "fallback",
                 "primary_model": self.primary.model,
@@ -156,6 +172,6 @@ class RetryThenFallbackLlm(BaseLlm):
             async for resp in self._call(self.backup, llm_request, stream, {"yielded": False}):
                 yield resp
         except Exception as exc:
-            logger.exception("FALLBACK: backup model %s also failed: %s", self.backup.model, exc)
+            logger.exception("FALLBACK: backup model %s also failed: %s", self.backup.model, exc)  # noqa: TRY401
             raise
         logger.info("FALLBACK: backup model %s responded successfully", self.backup.model)
