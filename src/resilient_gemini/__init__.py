@@ -21,12 +21,13 @@ from .config import (
     parse_priority_mode,
     parse_thinking_level,
 )
-from .factory import resilient_model
+from .factory import LocatedGemini, resilient_model
 from .llm import RetryThenFallbackLlm, is_retryable
 
 __version__ = "0.3.0"
 
 __all__ = [
+    "LocatedGemini",
     "PriorityMode",
     "ResilienceConfig",
     "RetryThenFallbackLlm",

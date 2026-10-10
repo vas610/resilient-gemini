@@ -101,15 +101,23 @@ class ResilienceConfig:
     primary_thinking: Optional[types.ThinkingLevel] = None
     backup_thinking: Optional[types.ThinkingLevel] = None
 
+    # Vertex AI location per model, e.g. "us" or "global". None means use
+    # GOOGLE_CLOUD_LOCATION like a plain ADK Gemini model.
+    primary_location: Optional[str] = None
+    backup_location: Optional[str] = None
+
     # Primary: total calls (first try included) and linear step between them.
+    # step_jitter adds a random 0..step_jitter seconds to each wait (0 = exact schedule).
     max_attempts: int = 5
     step_seconds: float = 60.0
+    step_jitter: float = 0.0
 
     # Backup: the SDK's own exponential backoff.
     backup_attempts: int = 5
     backup_initial_delay: float = 60.0
     backup_exp_base: float = 2.0
     backup_max_delay: float = 300.0
+    backup_jitter: float = 1.0
 
     retryable_codes: frozenset[int] = field(default=DEFAULT_RETRYABLE_CODES)
 
@@ -123,6 +131,8 @@ class ResilienceConfig:
             raise ValueError("step_seconds must be >= 0")
         if self.backup_attempts < 1:
             raise ValueError("backup_attempts must be >= 1")
+        if self.step_jitter < 0 or self.backup_jitter < 0:
+            raise ValueError("step_jitter and backup_jitter must be >= 0")
 
     @classmethod
     def from_env(cls, **overrides) -> "ResilienceConfig":
@@ -137,12 +147,16 @@ class ResilienceConfig:
             backup_model=get("BACKUP_MODEL", DEFAULT_BACKUP_MODEL),
             primary_thinking=parse_thinking_level(get("PRIMARY_THINKING", None)),
             backup_thinking=parse_thinking_level(get("BACKUP_THINKING", None)),
+            primary_location=get("PRIMARY_LOCATION", "").strip() or None,
+            backup_location=get("BACKUP_LOCATION", "").strip() or None,
             max_attempts=int(get("MAX_ATTEMPTS", 5)),
             step_seconds=float(get("STEP_SECONDS", 60)),
+            step_jitter=float(get("STEP_JITTER", 0)),
             backup_attempts=int(get("BACKUP_ATTEMPTS", 5)),
             backup_initial_delay=float(get("BACKUP_INITIAL_DELAY", 60)),
             backup_exp_base=float(get("BACKUP_EXP_BASE", 2)),
             backup_max_delay=float(get("BACKUP_MAX_DELAY", 300)),
+            backup_jitter=float(get("BACKUP_JITTER", 1)),
             priority_paygo=parse_priority_mode(env.get(PRIORITY_PAYGO_ENV)),
         )
         return cfg.with_overrides(**overrides)

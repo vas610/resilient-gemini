@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import logging
+from functools import cached_property
+from typing import Optional
 
 from google.adk.models.google_llm import Gemini
-from google.genai import types
+from google.genai import Client, types
 
 from .config import (
     PRIORITY_COST_NOTE,
@@ -17,6 +19,33 @@ from .config import (
 from .llm import RetryThenFallbackLlm
 
 logger = logging.getLogger("resilient_gemini")
+
+
+class LocatedGemini(Gemini):
+    """ADK ``Gemini`` pinned to a Vertex AI location instead of GOOGLE_CLOUD_LOCATION.
+
+    This is the subclass-and-override-``api_client`` pattern from ADK's own
+    ``Gemini`` docs. Only ``location`` is passed; the SDK still picks the endpoint
+    (no custom base_url), so ``"us"`` still resolves to the US multi-region.
+    """
+
+    location: str
+
+    @cached_property
+    def api_client(self) -> Client:
+        return Client(
+            location=self.location,
+            http_options=types.HttpOptions(
+                headers=self._tracking_headers(),
+                retry_options=self.retry_options,
+            ),
+        )
+
+
+def _gemini(model: str, location: Optional[str], retry_options: types.HttpRetryOptions) -> Gemini:
+    if location is None:
+        return Gemini(model=model, retry_options=retry_options)
+    return LocatedGemini(model=model, location=location, retry_options=retry_options)
 
 
 def resilient_model(config: ResilienceConfig | None = None, **overrides) -> RetryThenFallbackLlm:
@@ -31,8 +60,10 @@ def resilient_model(config: ResilienceConfig | None = None, **overrides) -> Retr
     Priority PayGo is the one exception: it can only be switched on with the
     RESILIENT_GEMINI_PRIORITY_PAYGO environment variable.
 
-    Location, project and Vertex mode come from the standard Google env vars
-    (GOOGLE_GENAI_USE_VERTEXAI, GOOGLE_CLOUD_PROJECT, GOOGLE_CLOUD_LOCATION=us).
+    Project and Vertex mode come from the standard Google env vars
+    (GOOGLE_GENAI_USE_VERTEXAI, GOOGLE_CLOUD_PROJECT). Location comes from
+    GOOGLE_CLOUD_LOCATION (e.g. ``us``) unless primary_location / backup_location
+    is set.
     """
     if config is None:
         config = ResilienceConfig.from_env(**overrides)
@@ -41,19 +72,21 @@ def resilient_model(config: ResilienceConfig | None = None, **overrides) -> Retr
 
     codes = sorted(config.retryable_codes)
 
-    primary = Gemini(
-        model=config.primary_model,
+    primary = _gemini(
+        config.primary_model,
+        config.primary_location,
         # SDK retries off: the wrapper owns the 60s/120s/180s/... schedule.
-        retry_options=types.HttpRetryOptions(attempts=1),
+        types.HttpRetryOptions(attempts=1),
     )
-    backup = Gemini(
-        model=config.backup_model,
-        retry_options=types.HttpRetryOptions(
+    backup = _gemini(
+        config.backup_model,
+        config.backup_location,
+        types.HttpRetryOptions(
             attempts=config.backup_attempts,
             initial_delay=config.backup_initial_delay,
             exp_base=config.backup_exp_base,
             max_delay=config.backup_max_delay,
-            jitter=1,
+            jitter=config.backup_jitter,
             http_status_codes=codes,
         ),
     )
@@ -75,9 +108,10 @@ def resilient_model(config: ResilienceConfig | None = None, **overrides) -> Retr
         backup_thinking=config.backup_thinking,
         max_attempts=config.max_attempts,
         step_seconds=config.step_seconds,
+        step_jitter=config.step_jitter,
         retryable_codes=config.retryable_codes,
         priority_paygo=config.priority_paygo,
     )
 
 
-__all__ = ["resilient_model"]
+__all__ = ["LocatedGemini", "resilient_model"]

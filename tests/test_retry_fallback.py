@@ -7,11 +7,13 @@ Run:  pip install -e ".[test]" && pytest -q
 import asyncio
 from typing import AsyncGenerator, List, Optional
 
+import httpx
 import pytest
 from google.adk.models.base_llm import BaseLlm
 from google.adk.models.llm_request import LlmRequest
 from google.adk.models.llm_response import LlmResponse
 from google.genai import errors, types
+from pydantic import Field
 
 import resilient_gemini.llm as llm_mod
 from resilient_gemini import (
@@ -259,3 +261,189 @@ def test_missing_google_adk_gives_clear_import_error(monkeypatch):
     monkeypatch.setitem(sys.modules, "google.adk", None)
     with pytest.raises(ImportError, match="needs google-adk"):
         importlib.import_module("resilient_gemini")
+
+
+# --------------------------------------------- retry edge cases (more fakes)
+
+
+class ScriptedLlm(BaseLlm):
+    """Raises ``errors_to_raise`` one per call, then answers. If
+    ``yield_then_fail`` is set, it yields one chunk and then raises."""
+
+    errors_to_raise: list = Field(default_factory=list)
+    yield_then_fail: Optional[Exception] = None
+    calls: int = 0
+
+    async def generate_content_async(self, llm_request, stream=False):
+        self.calls += 1
+        if self.calls <= len(self.errors_to_raise):
+            raise self.errors_to_raise[self.calls - 1]
+        yield LlmResponse(content=types.Content(role="model", parts=[types.Part(text=self.model)]))
+        if self.yield_then_fail is not None:
+            raise self.yield_then_fail
+
+
+def api_error(code: int) -> errors.APIError:
+    cls = errors.ServerError if code >= 500 else errors.ClientError
+    return cls(code, {"error": {"code": code, "message": "boom"}})
+
+
+def make_scripted(primary_errors=(), yield_then_fail=None, **kw) -> RetryThenFallbackLlm:
+    return RetryThenFallbackLlm(
+        model="primary",
+        primary=ScriptedLlm(model="primary", errors_to_raise=list(primary_errors),
+                            yield_then_fail=yield_then_fail),
+        backup=ScriptedLlm(model="backup"),
+        **kw,
+    )
+
+
+@pytest.mark.parametrize(
+    "exc",
+    [
+        httpx.ConnectTimeout("connect timed out"),
+        httpx.ReadTimeout("read timed out"),
+        httpx.ConnectError("connection refused"),
+        asyncio.TimeoutError(),
+    ],
+    ids=["connect-timeout", "read-timeout", "connect-error", "asyncio-timeout"],
+)
+def test_network_errors_are_retried(waits, exc):
+    m = make_scripted(primary_errors=[exc, exc])
+    assert run(m) == ["primary"]
+    assert m.primary.calls == 3 and m.backup.calls == 0
+    assert waits == [60, 120]
+
+
+@pytest.mark.parametrize("code", [408, 429, 499, 500, 502, 503, 504])
+def test_every_retryable_code_is_retried(waits, code):
+    m = make_scripted(primary_errors=[api_error(code)])
+    assert run(m) == ["primary"]
+    assert waits == [60]
+
+
+@pytest.mark.parametrize("code", [400, 401, 403, 404])
+def test_client_errors_never_retry_or_fall_back(waits, code):
+    m = make_scripted(primary_errors=[api_error(code)])
+    with pytest.raises(errors.ClientError):
+        run(m)
+    assert m.primary.calls == 1 and m.backup.calls == 0
+    assert waits == []
+
+
+def test_stream_that_already_yielded_is_not_retried(waits):
+    m = make_scripted(yield_then_fail=api_error(503))
+    seen: List[str] = []
+
+    async def go():
+        req = LlmRequest(contents=[], config=types.GenerateContentConfig())
+        async for r in m.generate_content_async(req, stream=True):
+            seen.append(r.content.parts[0].text)
+
+    with pytest.raises(errors.ServerError):
+        asyncio.run(go())
+    assert seen == ["primary"]  # one chunk, no duplicate from a retry
+    assert m.primary.calls == 1 and m.backup.calls == 0
+    assert waits == []
+
+
+def test_fallback_log_record_has_alerting_fields(waits, caplog):
+    m = make(primary_fails=99)
+    with caplog.at_level("ERROR", logger="resilient_gemini"):
+        run(m)
+    rec = next(r for r in caplog.records if r.message.startswith("FALLBACK:"))
+    assert rec.name == "resilient_gemini"
+    assert rec.resilient_gemini_event == "fallback"
+    assert rec.primary_model == "primary"
+    assert rec.backup_model == "backup"
+
+
+def test_retry_then_fallback_full_story(waits, caplog):
+    """Readable end-to-end demo: 5 transient failures, 1-2-3-4 minute gaps, then backup."""
+    m = make_scripted(primary_errors=[api_error(503), api_error(429), httpx.ReadTimeout("slow"),
+                                      api_error(500), api_error(504)])
+    with caplog.at_level("INFO", logger="resilient_gemini"):
+        assert run(m) == ["backup"]
+    retries = [r.message for r in caplog.records if "Retrying in" in r.message]
+    assert [msg.rsplit(" ", 1)[-1] for msg in retries] == ["60s", "120s", "180s", "240s"]
+    assert waits == [60, 120, 180, 240]
+    assert sum(r.message.startswith("FALLBACK:") for r in caplog.records) == 2  # switching + success
+
+
+# ------------------------------------------------------- jitter and location
+
+
+def test_step_jitter_adds_bounded_random_delay(waits):
+    m = make(primary_fails=99, step_jitter=5)
+    run(m)
+    assert len(waits) == 4
+    for base, w in zip([60, 120, 180, 240], waits):
+        assert base <= w <= base + 5
+
+
+def test_no_jitter_by_default_keeps_exact_schedule(waits):
+    m = make(primary_fails=99)
+    run(m)
+    assert waits == [60, 120, 180, 240]
+
+
+def test_negative_jitter_is_rejected():
+    with pytest.raises(ValueError):
+        ResilienceConfig(step_jitter=-1)
+    with pytest.raises(ValueError):
+        ResilienceConfig(backup_jitter=-1)
+
+
+def test_new_settings_from_env(monkeypatch):
+    monkeypatch.setenv("RESILIENT_GEMINI_PRIMARY_LOCATION", "us")
+    monkeypatch.setenv("RESILIENT_GEMINI_BACKUP_LOCATION", "global")
+    monkeypatch.setenv("RESILIENT_GEMINI_STEP_JITTER", "7.5")
+    monkeypatch.setenv("RESILIENT_GEMINI_BACKUP_JITTER", "0")
+    cfg = ResilienceConfig.from_env()
+    assert cfg.primary_location == "us"
+    assert cfg.backup_location == "global"
+    assert cfg.step_jitter == 7.5
+    assert cfg.backup_jitter == 0
+
+
+def test_locations_default_to_none(monkeypatch):
+    monkeypatch.delenv("RESILIENT_GEMINI_PRIMARY_LOCATION", raising=False)
+    monkeypatch.setenv("RESILIENT_GEMINI_BACKUP_LOCATION", "  ")
+    cfg = ResilienceConfig.from_env()
+    assert cfg.primary_location is None and cfg.backup_location is None
+
+
+def test_factory_without_location_uses_plain_gemini(monkeypatch):
+    from google.adk.models.google_llm import Gemini
+
+    from resilient_gemini import LocatedGemini, resilient_model
+
+    for var in ("PRIMARY_LOCATION", "BACKUP_LOCATION"):
+        monkeypatch.delenv("RESILIENT_GEMINI_" + var, raising=False)
+    m = resilient_model(backup_jitter=0.5, step_jitter=3)
+    assert type(m.primary) is Gemini and type(m.backup) is Gemini
+    assert not isinstance(m.primary, LocatedGemini)
+    assert m.backup.retry_options.jitter == 0.5
+    assert m.step_jitter == 3
+
+
+def test_factory_with_location_pins_client_location(monkeypatch):
+    import resilient_gemini.factory as factory_mod
+    from resilient_gemini import LocatedGemini, resilient_model
+
+    created: List[dict] = []
+    monkeypatch.setattr(factory_mod, "Client", lambda **kw: created.append(kw) or kw)
+
+    m = resilient_model(primary_location="us", backup_location="global")
+    assert isinstance(m.primary, LocatedGemini) and isinstance(m.backup, LocatedGemini)
+
+    _ = m.primary.api_client, m.backup.api_client  # build both clients
+    primary_kw, backup_kw = created
+    assert primary_kw["location"] == "us"
+    assert backup_kw["location"] == "global"
+    # SDK retries stay off on the primary; backup keeps its exponential retry.
+    assert primary_kw["http_options"].retry_options.attempts == 1
+    assert backup_kw["http_options"].retry_options.attempts == 5
+    # Never a custom base_url: the SDK picks the endpoint from the location.
+    assert primary_kw["http_options"].base_url is None
+    assert "base_url" not in primary_kw
