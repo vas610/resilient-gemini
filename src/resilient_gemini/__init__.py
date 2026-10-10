@@ -11,7 +11,7 @@ try:
 except ImportError as exc:  # pragma: no cover - exercised in tests via sys.modules
     raise ImportError(
         "resilient_gemini needs google-adk, which it does not install for you. "
-        "Add it to your agent project, e.g. `uv add 'google-adk>=1.39.1,<2'` "
+        "Add it to your agent project, e.g. `uv add 'google-adk>=1.36.0,<2'` "
         "or install this package with the extra: `pip install 'resilient-gemini[adk]'`."
     ) from exc
 

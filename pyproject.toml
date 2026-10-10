@@ -13,11 +13,11 @@ dependencies = [
 
 [project.optional-dependencies]
 # Optional: `pip install "resilient-gemini[adk]"` also installs a supported google-adk.
-adk = ["google-adk>=1.39.1,<2"]
+adk = ["google-adk>=1.36.0,<2"]
 
 [dependency-groups]
 dev = [
-    "google-adk>=1.39.1,<2",
+    "google-adk>=1.36.0,<2",
     "pytest>=8",
     "ruff",
 ]
