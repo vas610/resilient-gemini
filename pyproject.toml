@@ -1,17 +1,23 @@
 [project]
 name = "resilient-gemini"
-version = "0.2.0"
+version = "0.3.0"
 description = "Plug-and-play retry (1, 2, 3... minute gaps), model fallback and opt-in Priority PayGo for Google ADK Gemini agents."
 readme = "README.md"
 requires-python = ">=3.10"
+# google-adk is a peer dependency: the agent project that uses this library
+# installs it. It is only in the dev group here, for local tests and examples.
 dependencies = [
-    "google-adk>=1.39.1,<2",
     "google-genai",
     "httpx",
 ]
 
+[project.optional-dependencies]
+# Optional: `pip install "resilient-gemini[adk]"` also installs a supported google-adk.
+adk = ["google-adk>=1.39.1,<2"]
+
 [dependency-groups]
 dev = [
+    "google-adk>=1.39.1,<2",
     "pytest>=8",
     "ruff",
 ]
