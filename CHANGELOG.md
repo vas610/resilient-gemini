@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.0
+
+- `google-adk` is no longer an install dependency. It is a peer dependency: install it in your agent project (`google-adk>=1.39.1,<2`), or use the `adk` extra: `pip install "resilient-gemini[adk]"`. Importing `resilient_gemini` without it raises a clear `ImportError`. For development it is in the `dev` group, so `uv sync` still installs it.
+
 ## 0.2.0
 
 - Opt-in Priority PayGo via `RESILIENT_GEMINI_PRIORITY_PAYGO=priority|spillover` (env var only, off by default).

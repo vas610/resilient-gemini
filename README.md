@@ -69,19 +69,24 @@ source .venv/bin/activate
 From your team's Git repo (replace URL and tag):
 
 ```bash
-uv pip install "resilient-gemini @ git+https://github.com/YOUR_ORG/resilient-gemini.git@v0.2.0"
+uv pip install "resilient-gemini @ git+https://github.com/YOUR_ORG/resilient-gemini.git@v0.3.0"
 # or, if your project is a uv project:
-uv add "resilient-gemini @ git+https://github.com/YOUR_ORG/resilient-gemini.git@v0.2.0"
+uv add "resilient-gemini @ git+https://github.com/YOUR_ORG/resilient-gemini.git@v0.3.0"
 ```
 
 From a private Artifact Registry repo (see "Publishing"):
 
 ```bash
-uv pip install resilient-gemini==0.2.0 \
+uv pip install resilient-gemini==0.3.0 \
   --extra-index-url https://us-python.pkg.dev/YOUR_PROJECT/python-libs/simple/
 ```
 
 Plain pip works the same way: replace `uv pip` with `pip`.
+
+`google-adk` is a peer dependency: this package does not install it. Your agent
+project must already have it (`google-adk>=1.39.1,<2`), e.g. `uv add "google-adk>=1.39.1,<2"`,
+or install the `adk` extra to get a supported version with it: `resilient-gemini[adk]`.
+Without it, `import resilient_gemini` raises an `ImportError` saying so.
 
 ### 3. Authenticate and set the environment
 
@@ -132,7 +137,7 @@ This reads a private SDK attribute, so use it for debugging only. If it shows `h
 ```bash
 git clone https://github.com/YOUR_ORG/resilient-gemini.git
 cd resilient-gemini
-uv sync                       # creates .venv with Python 3.12, installs the package (editable) + dev tools
+uv sync                       # creates .venv with Python 3.12, installs the package (editable) + dev tools, incl. google-adk
 source .venv/bin/activate     # optional: `uv run ...` works without activating
 ```
 
@@ -169,8 +174,8 @@ RESILIENT_GEMINI_MAX_ATTEMPTS=2 RESILIENT_GEMINI_STEP_SECONDS=1 \
 
 ```bash
 uv build                      # writes dist/*.whl and dist/*.tar.gz
-git commit -am "Release v0.2.0"
-git tag v0.2.0 && git push && git push --tags
+git commit -am "Release v0.3.0"
+git tag v0.3.0 && git push && git push --tags
 ```
 
 ---

@@ -6,6 +6,15 @@
     root_agent = LlmAgent(name="my_agent", model=resilient_model(), instruction="...")
 """
 
+try:
+    import google.adk  # noqa: F401  (peer dependency, not installed by this package)
+except ImportError as exc:  # pragma: no cover - exercised in tests via sys.modules
+    raise ImportError(
+        "resilient_gemini needs google-adk, which it does not install for you. "
+        "Add it to your agent project, e.g. `uv add 'google-adk>=1.39.1,<2'` "
+        "or install this package with the extra: `pip install 'resilient-gemini[adk]'`."
+    ) from exc
+
 from .config import (
     PriorityMode,
     ResilienceConfig,
@@ -15,7 +24,7 @@ from .config import (
 from .factory import resilient_model
 from .llm import RetryThenFallbackLlm, is_retryable
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 __all__ = [
     "PriorityMode",

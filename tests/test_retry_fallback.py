@@ -246,3 +246,16 @@ def test_factory_builds_without_network(monkeypatch):
     assert m.max_attempts == 4
     assert m.primary.retry_options.attempts == 1
     assert 499 in m.backup.retry_options.http_status_codes
+
+
+def test_missing_google_adk_gives_clear_import_error(monkeypatch):
+    # google-adk is a peer dependency; simulate it being absent.
+    import importlib
+    import sys
+
+    for name in list(sys.modules):
+        if name == "resilient_gemini" or name.startswith("resilient_gemini."):
+            monkeypatch.delitem(sys.modules, name)
+    monkeypatch.setitem(sys.modules, "google.adk", None)
+    with pytest.raises(ImportError, match="needs google-adk"):
+        importlib.import_module("resilient_gemini")
