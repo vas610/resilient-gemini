@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 from functools import cached_property
-from typing import Optional
 
 from google.adk.models.google_llm import Gemini
 from google.genai import Client, types
@@ -42,7 +41,7 @@ class LocatedGemini(Gemini):
         )
 
 
-def _gemini(model: str, location: Optional[str], retry_options: types.HttpRetryOptions) -> Gemini:
+def _gemini(model: str, location: str | None, retry_options: types.HttpRetryOptions) -> Gemini:
     if location is None:
         return Gemini(model=model, retry_options=retry_options)
     return LocatedGemini(model=model, location=location, retry_options=retry_options)
@@ -93,10 +92,12 @@ def resilient_model(config: ResilienceConfig | None = None, **overrides) -> Retr
 
     if config.priority_paygo is not PriorityMode.OFF:
         logger.warning(
-            "PRIORITY PAYGO ENABLED via %s=%s for %s and %s. Every request is %s. "
-            "Headers: %s",
-            PRIORITY_PAYGO_ENV, config.priority_paygo.value,
-            config.primary_model, config.backup_model, PRIORITY_COST_NOTE,
+            "PRIORITY PAYGO ENABLED via %s=%s for %s and %s. Every request is %s. Headers: %s",
+            PRIORITY_PAYGO_ENV,
+            config.priority_paygo.value,
+            config.primary_model,
+            config.backup_model,
+            PRIORITY_COST_NOTE,
             PRIORITY_HEADERS[config.priority_paygo],
         )
 

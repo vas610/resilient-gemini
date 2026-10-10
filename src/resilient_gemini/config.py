@@ -9,11 +9,10 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field, replace
 from enum import Enum
-from typing import Optional, Union
 
 from google.genai import types
 
-ThinkingInput = Union[str, types.ThinkingLevel, None]
+ThinkingInput = str | types.ThinkingLevel | None
 
 DEFAULT_PRIMARY_MODEL = "gemini-3.5-flash"
 DEFAULT_BACKUP_MODEL = "gemini-3.6-flash"
@@ -52,7 +51,7 @@ PRIORITY_HEADERS = {
 PRIORITY_COST_NOTE = "billed at Priority PayGo rates, ~2x Standard PayGo cost"
 
 
-def parse_priority_mode(value: Optional[str]) -> PriorityMode:
+def parse_priority_mode(value: str | None) -> PriorityMode:
     """Strict parser: only the exact words 'priority' or 'spillover' turn it on.
 
     Anything ambiguous (e.g. 'true', 'yes', typos) raises instead of guessing,
@@ -71,7 +70,7 @@ def parse_priority_mode(value: Optional[str]) -> PriorityMode:
     )
 
 
-def parse_thinking_level(value: ThinkingInput) -> Optional[types.ThinkingLevel]:
+def parse_thinking_level(value: ThinkingInput) -> types.ThinkingLevel | None:
     """Turn 'low' / 'HIGH' / ThinkingLevel.MEDIUM / None into a ThinkingLevel.
 
     None, '' or 'default' mean "don't set it; use the model's default".
@@ -98,13 +97,13 @@ class ResilienceConfig:
 
     primary_model: str = DEFAULT_PRIMARY_MODEL
     backup_model: str = DEFAULT_BACKUP_MODEL
-    primary_thinking: Optional[types.ThinkingLevel] = None
-    backup_thinking: Optional[types.ThinkingLevel] = None
+    primary_thinking: types.ThinkingLevel | None = None
+    backup_thinking: types.ThinkingLevel | None = None
 
     # Vertex AI location per model, e.g. "us" or "global". None means use
     # GOOGLE_CLOUD_LOCATION like a plain ADK Gemini model.
-    primary_location: Optional[str] = None
-    backup_location: Optional[str] = None
+    primary_location: str | None = None
+    backup_location: str | None = None
 
     # Primary: total calls (first try included) and linear step between them.
     # step_jitter adds a random 0..step_jitter seconds to each wait (0 = exact schedule).
@@ -135,7 +134,7 @@ class ResilienceConfig:
             raise ValueError("step_jitter and backup_jitter must be >= 0")
 
     @classmethod
-    def from_env(cls, **overrides) -> "ResilienceConfig":
+    def from_env(cls, **overrides) -> ResilienceConfig:
         """Build a config from RESILIENT_GEMINI_* env vars, then apply overrides."""
         env = os.environ
 
@@ -161,7 +160,7 @@ class ResilienceConfig:
         )
         return cfg.with_overrides(**overrides)
 
-    def with_overrides(self, **overrides) -> "ResilienceConfig":
+    def with_overrides(self, **overrides) -> ResilienceConfig:
         """Return a copy with some fields changed. Thinking levels accept strings."""
         if not overrides:
             return self

@@ -1,9 +1,9 @@
 """Plug-and-play retry + fallback for Google ADK Gemini agents.
 
-    from google.adk.agents import LlmAgent
-    from resilient_gemini import resilient_model
+from google.adk.agents import LlmAgent
+from resilient_gemini import resilient_model
 
-    root_agent = LlmAgent(name="my_agent", model=resilient_model(), instruction="...")
+root_agent = LlmAgent(name="my_agent", model=resilient_model(), instruction="...")
 """
 
 try:
@@ -31,9 +31,9 @@ __all__ = [
     "PriorityMode",
     "ResilienceConfig",
     "RetryThenFallbackLlm",
+    "__version__",
     "is_retryable",
     "parse_priority_mode",
     "parse_thinking_level",
     "resilient_model",
-    "__version__",
 ]

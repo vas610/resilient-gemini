@@ -5,7 +5,7 @@ Run:  pip install -e ".[test]" && pytest -q
 """
 
 import asyncio
-from typing import AsyncGenerator, List, Optional
+from collections.abc import AsyncGenerator
 
 import httpx
 import pytest
@@ -31,10 +31,10 @@ class FakeLlm(BaseLlm):
     fail_times: int = 0
     error_code: int = 503
     calls: int = 0
-    seen_thinking: List[Optional[types.ThinkingLevel]] = []
-    seen_models: List[str] = []
-    seen_headers: List[dict] = []
-    traffic_type: Optional[types.TrafficType] = None
+    seen_thinking: list[types.ThinkingLevel | None] = Field(default_factory=list)
+    seen_models: list[str] = Field(default_factory=list)
+    seen_headers: list[dict] = Field(default_factory=list)
+    traffic_type: types.TrafficType | None = None
 
     async def generate_content_async(
         self, llm_request: LlmRequest, stream: bool = False
@@ -51,7 +51,8 @@ class FakeLlm(BaseLlm):
             raise cls(self.error_code, {"error": {"code": self.error_code, "message": "boom"}})
         usage = (
             types.GenerateContentResponseUsageMetadata(traffic_type=self.traffic_type)
-            if self.traffic_type else None
+            if self.traffic_type
+            else None
         )
         yield LlmResponse(
             content=types.Content(role="model", parts=[types.Part(text=self.model)]),
@@ -61,7 +62,7 @@ class FakeLlm(BaseLlm):
 
 @pytest.fixture
 def waits(monkeypatch):
-    recorded: List[float] = []
+    recorded: list[float] = []
 
     async def fake_sleep(seconds):
         recorded.append(seconds)
@@ -70,7 +71,7 @@ def waits(monkeypatch):
     return recorded
 
 
-def run(model: RetryThenFallbackLlm) -> List[str]:
+def run(model: RetryThenFallbackLlm) -> list[str]:
     async def go():
         req = LlmRequest(
             contents=[types.Content(role="user", parts=[types.Part(text="hi")])],
@@ -271,7 +272,7 @@ class ScriptedLlm(BaseLlm):
     ``yield_then_fail`` is set, it yields one chunk and then raises."""
 
     errors_to_raise: list = Field(default_factory=list)
-    yield_then_fail: Optional[Exception] = None
+    yield_then_fail: Exception | None = None
     calls: int = 0
 
     async def generate_content_async(self, llm_request, stream=False):
@@ -291,8 +292,9 @@ def api_error(code: int) -> errors.APIError:
 def make_scripted(primary_errors=(), yield_then_fail=None, **kw) -> RetryThenFallbackLlm:
     return RetryThenFallbackLlm(
         model="primary",
-        primary=ScriptedLlm(model="primary", errors_to_raise=list(primary_errors),
-                            yield_then_fail=yield_then_fail),
+        primary=ScriptedLlm(
+            model="primary", errors_to_raise=list(primary_errors), yield_then_fail=yield_then_fail
+        ),
         backup=ScriptedLlm(model="backup"),
         **kw,
     )
@@ -333,7 +335,7 @@ def test_client_errors_never_retry_or_fall_back(waits, code):
 
 def test_stream_that_already_yielded_is_not_retried(waits):
     m = make_scripted(yield_then_fail=api_error(503))
-    seen: List[str] = []
+    seen: list[str] = []
 
     async def go():
         req = LlmRequest(contents=[], config=types.GenerateContentConfig())
@@ -360,8 +362,15 @@ def test_fallback_log_record_has_alerting_fields(waits, caplog):
 
 def test_retry_then_fallback_full_story(waits, caplog):
     """Readable end-to-end demo: 5 transient failures, 1-2-3-4 minute gaps, then backup."""
-    m = make_scripted(primary_errors=[api_error(503), api_error(429), httpx.ReadTimeout("slow"),
-                                      api_error(500), api_error(504)])
+    m = make_scripted(
+        primary_errors=[
+            api_error(503),
+            api_error(429),
+            httpx.ReadTimeout("slow"),
+            api_error(500),
+            api_error(504),
+        ]
+    )
     with caplog.at_level("INFO", logger="resilient_gemini"):
         assert run(m) == ["backup"]
     retries = [r.message for r in caplog.records if "Retrying in" in r.message]
@@ -431,7 +440,7 @@ def test_factory_with_location_pins_client_location(monkeypatch):
     import resilient_gemini.factory as factory_mod
     from resilient_gemini import LocatedGemini, resilient_model
 
-    created: List[dict] = []
+    created: list[dict] = []
     monkeypatch.setattr(factory_mod, "Client", lambda **kw: created.append(kw) or kw)
 
     m = resilient_model(primary_location="us", backup_location="global")

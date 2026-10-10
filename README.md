@@ -1,13 +1,13 @@
-# resilient-gemini
+# 🛡️ resilient-gemini
 
 Drop-in retry, fallback and opt-in Priority PayGo for Google ADK agents on Gemini.
 
-- **Primary** `gemini-3.5-flash`: 5 tries, waiting **1, 2, 3, 4 minutes** between them.
-- **Fallback** `gemini-3.6-flash`: used if all 5 fail, logged as an `ERROR` line starting `FALLBACK:`.
-- **Thinking level** per model (`minimal`, `low`, `medium`, `high`).
-- **US multi-region** (`GOOGLE_CLOUD_LOCATION=us`), no custom endpoint needed.
-- **Priority PayGo**: off unless switched on with an env var. **Costs ~2x Standard PayGo.**
-- Only transient failures are retried (408, 429, 499, 5xx, timeouts, connection errors). Errors like 400 or 403 fail fast.
+- 🔁 **Primary** `gemini-3.5-flash`: 5 tries, waiting **1, 2, 3, 4 minutes** between them.
+- 🛟 **Fallback** `gemini-3.6-flash`: used if all 5 fail, logged as an `ERROR` line starting `FALLBACK:`.
+- 🧠 **Thinking level** per model (`minimal`, `low`, `medium`, `high`).
+- 🌎 **US multi-region** (`GOOGLE_CLOUD_LOCATION=us`), no custom endpoint needed.
+- 💰 **Priority PayGo**: off unless switched on with an env var. **Costs ~2x Standard PayGo.**
+- ⚡ Only transient failures are retried (408, 429, 499, 5xx, timeouts, connection errors). Errors like 400 or 403 fail fast.
 
 ```python
 from google.adk.agents import LlmAgent
@@ -18,7 +18,7 @@ root_agent = LlmAgent(name="my_agent", model=resilient_model(), instruction="You
 
 ---
 
-## Project layout
+## 🗂️ Project layout
 
 ```
 resilient-gemini/
@@ -46,9 +46,9 @@ resilient-gemini/
 
 ---
 
-## Part 1 — Using the package in your project
+## 🚀 Part 1 — Using the package in your project
 
-### 1. Create and activate a virtual environment
+### 1. 🐍 Create and activate a virtual environment
 
 With [uv](https://docs.astral.sh/uv/) (recommended):
 
@@ -65,7 +65,7 @@ python3 -m venv .venv
 source .venv/bin/activate
 ```
 
-### 2. Install
+### 2. 📦 Install
 
 From your team's Git repo (replace URL and tag):
 
@@ -89,7 +89,7 @@ project must already have it (`google-adk>=1.39.1,<2`), e.g. `uv add "google-adk
 or install the `adk` extra to get a supported version with it: `resilient-gemini[adk]`.
 Without it, `import resilient_gemini` raises an `ImportError` saying so.
 
-### 3. Authenticate and set the environment
+### 3. 🔑 Authenticate and set the environment
 
 ```bash
 gcloud auth application-default login
@@ -101,7 +101,7 @@ export GOOGLE_CLOUD_LOCATION=us
 
 Or copy `examples/my_agent/.env.example` to `.env` next to your agent. `adk run` and `adk web` load it automatically.
 
-### 4. Run it once
+### 4. ▶️ Run it once
 
 Quickest check, a single prompt:
 
@@ -118,10 +118,11 @@ adk web examples                 # browser UI, pick "my_agent"
 
 In your own code, change the `model=` line of any `LlmAgent` to `resilient_model()`.
 
-### 5. Confirm the US multi-region endpoint (once)
+### 5. 🌎 Confirm the US multi-region endpoint (once)
 
 ```python
 from resilient_gemini import resilient_model
+
 m = resilient_model()
 print(m.primary.api_client._api_client._http_options.base_url)
 # expect: https://aiplatform.us.rep.googleapis.com/
@@ -131,9 +132,9 @@ This reads a private SDK attribute, so use it for debugging only. If it shows `h
 
 ---
 
-## Part 2 — Developing this package
+## 🛠️ Part 2 — Developing this package
 
-### 1. Clone and set up the virtual environment
+### 1. 📥 Clone and set up the virtual environment
 
 ```bash
 git clone https://github.com/YOUR_ORG/resilient-gemini.git
@@ -144,7 +145,7 @@ source .venv/bin/activate     # optional: `uv run ...` works without activating
 
 `uv sync` writes `uv.lock`. Commit it so everyone gets the same versions.
 
-### 2. Test and lint
+### 2. 🧪 Test and lint
 
 ```bash
 uv run pytest -q              # whole suite, ~1s: no network, no credentials, no real sleeping
@@ -152,15 +153,15 @@ uv run ruff check .
 uv run ruff format .
 ```
 
-#### How the tests fake failures and timeouts
+#### 🎭 How the tests fake failures and timeouts
 
 The unit tests never call Gemini and never wait. Two tricks make that work:
 
-- **Fake models.** `FakeLlm` and `ScriptedLlm` in `tests/test_retry_fallback.py` stand in for
+- 🤖 **Fake models.** `FakeLlm` and `ScriptedLlm` in `tests/test_retry_fallback.py` stand in for
   the primary and backup. They raise whatever error the test chooses for the first N calls
   (a 503, a 429, an `httpx.ReadTimeout`, ...) and then answer with their own model name. So
   `["backup"]` as the answer means the fallback ran.
-- **Recorded sleeps.** The retry loop waits via `resilient_gemini.llm._sleep`. The `waits`
+- ⏸️ **Recorded sleeps.** The retry loop waits via `resilient_gemini.llm._sleep`. The `waits`
   fixture swaps that for a function that only records the number of seconds. The full
   60 + 120 + 180 + 240 s schedule runs instantly, and the test asserts on the list,
   e.g. `waits == [60, 120, 180, 240]`.
@@ -197,14 +198,14 @@ To fake a new kind of failure, pass it to `ScriptedLlm`:
 
 ```python
 m = make_scripted(primary_errors=[httpx.ReadTimeout("slow"), api_error(503)])
-assert run(m) == ["primary"]   # two failures, then the primary answers on try 3
+assert run(m) == ["primary"]  # two failures, then the primary answers on try 3
 assert waits == [60, 120]
 ```
 
 Rules for new tests: use fake models, never real Gemini, and use the `waits` fixture rather
 than patching `asyncio.sleep`.
 
-### 3. Try your changes against real Gemini
+### 3. 🔌 Try your changes against real Gemini
 
 ```bash
 cp examples/my_agent/.env.example examples/my_agent/.env   # fill in your project
@@ -212,7 +213,7 @@ uv run python examples/run_once.py "hello"
 uv run adk web examples
 ```
 
-#### Watch retries and fallback live
+#### 👀 Watch retries and fallback live
 
 Real 429/5xx errors can't be produced on demand, so `examples/live_retry_demo.py` wraps the
 real models in a `FaultyLlm`. It raises fake errors for the first N calls and then sends
@@ -248,7 +249,7 @@ RESILIENT_GEMINI_MAX_ATTEMPTS=2 RESILIENT_GEMINI_STEP_SECONDS=1 \
   uv run python examples/run_once.py "hello"
 ```
 
-### 4. Release
+### 4. 🏷️ Release
 
 1. Bump `version` in `pyproject.toml` and `__version__` in `src/resilient_gemini/__init__.py`.
 2. Add a `CHANGELOG.md` entry.
@@ -262,7 +263,7 @@ git tag v0.3.0 && git push && git push --tags
 
 ---
 
-## Settings
+## ⚙️ Settings
 
 | Env var | Keyword | Default |
 |---|---|---|
@@ -286,7 +287,7 @@ Precedence: keyword arguments > env vars > defaults.
 
 ---
 
-## Priority PayGo (opt-in, ~2x cost)
+## 💰 Priority PayGo (opt-in, ~2x cost)
 
 Off by default. It can **only** be turned on with an environment variable; passing it in code raises an error.
 
@@ -315,7 +316,7 @@ Google downgrades a request to Standard PayGo only when there is no spare priori
 
 ---
 
-## Logs
+## 📜 Logs
 
 Logger name: `resilient_gemini`.
 
@@ -329,17 +330,17 @@ The fallback record carries `extra` fields (`resilient_gemini_event="fallback"`,
 
 ---
 
-## Things to know
+## ⚠️ Things to know
 
-- **Worst case before fallback is about 10 minutes** (60+120+180+240 s, plus up to 4 x `step_jitter`). Your server, load balancer or Agent Engine request timeout must allow that, or lower `max_attempts` / `step_seconds`.
-- **Per-model location:** set `backup_location` to a different location than the primary (e.g. primary `us`, backup `global`) so fallback also helps when one location is having trouble. Only the location is passed to the SDK. It picks the endpoint itself, with no custom `base_url`. Needs Vertex AI mode.
-- **Streaming:** a response that has already started streaming is never retried, so users never see duplicated text.
-- **Thinking:** don't also set `planner=BuiltInPlanner(thinking_config=...)`. The wrapper sets thinking per call and would overwrite it.
-- **Built-in tools** that require the agent's model to be a `Gemini` instance (for example Google Search grounding) may refuse the wrapper. Put them on a sub-agent with a plain `Gemini` model, or test them first.
+- ⏱️ **Worst case before fallback is about 10 minutes** (60+120+180+240 s, plus up to 4 x `step_jitter`). Your server, load balancer or Agent Engine request timeout must allow that, or lower `max_attempts` / `step_seconds`.
+- 📍 **Per-model location:** set `backup_location` to a different location than the primary (e.g. primary `us`, backup `global`) so fallback also helps when one location is having trouble. Only the location is passed to the SDK. It picks the endpoint itself, with no custom `base_url`. Needs Vertex AI mode.
+- 🌊 **Streaming:** a response that has already started streaming is never retried, so users never see duplicated text.
+- 🧠 **Thinking:** don't also set `planner=BuiltInPlanner(thinking_config=...)`. The wrapper sets thinking per call and would overwrite it.
+- 🧰 **Built-in tools** that require the agent's model to be a `Gemini` instance (for example Google Search grounding) may refuse the wrapper. Put them on a sub-agent with a plain `Gemini` model, or test them first.
 
 ---
 
-## Publishing to your team
+## 📤 Publishing to your team
 
 **Option A — Git tag (simplest).** Push to an internal repo and tag releases (see "Release"). Teams install with the `git+https://...@vX.Y.Z` line.
 
