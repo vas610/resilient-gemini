@@ -3119,7 +3119,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "google-adk", marker = "extra == 'adk'", specifier = ">=1.39.1,<2" },
+    { name = "google-adk", marker = "extra == 'adk'", specifier = ">=1.36.0,<2" },
     { name = "google-genai" },
     { name = "httpx" },
 ]
@@ -3127,7 +3127,7 @@ provides-extras = ["adk"]
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "google-adk", specifier = ">=1.39.1,<2" },
+    { name = "google-adk", specifier = ">=1.36.0,<2" },
     { name = "pytest", specifier = ">=8" },
     { name = "ruff" },
 ]

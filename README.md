@@ -75,21 +75,34 @@ uv pip install "resilient-gemini @ git+https://github.com/YOUR_ORG/resilient-gem
 uv add "resilient-gemini @ git+https://github.com/YOUR_ORG/resilient-gemini.git@v0.3.0"
 ```
 
-From a private Artifact Registry repo (see "Publishing"):
-
-```bash
-uv pip install resilient-gemini==0.3.0 \
-  --extra-index-url https://us-python.pkg.dev/YOUR_PROJECT/python-libs/simple/
-```
-
 Plain pip works the same way: replace `uv pip` with `pip`.
 
-`google-adk` is a peer dependency: this package does not install it. Your agent
-project must already have it (`google-adk>=1.39.1,<2`), e.g. `uv add "google-adk>=1.39.1,<2"`,
-or install the `adk` extra to get a supported version with it: `resilient-gemini[adk]`.
-Without it, `import resilient_gemini` raises an `ImportError` saying so.
+`google-adk` is **not** installed by this package (see the next step).
 
-### 3. 🔑 Authenticate and set the environment
+### 3. 🧩 google-adk version
+
+`google-adk` is a peer dependency: your agent project brings it, this package does not
+install it. Supported and tested versions:
+
+| google-adk | Status |
+|---|---|
+| `1.36.0` – `1.39.1` | ✅ tested: full unit test suite on every release in this range, plus a live retry/fallback check on 1.36.0 and 1.39.1 |
+| `< 1.36.0` | ❌ not supported |
+| `> 1.39.1`, `< 2` | ⚠️ allowed by the version range, not tested yet |
+| `>= 2` | ❌ not supported (major version, may break the `BaseLlm` API) |
+
+If your project doesn't pin it yet:
+
+```bash
+uv add "google-adk>=1.36.0,<2"
+# or let this package pull in a supported version:
+uv add "resilient-gemini[adk] @ git+https://github.com/YOUR_ORG/resilient-gemini.git@v0.3.0"
+```
+
+Check what you have with `uv pip show google-adk` (or `pip show google-adk`). Without
+google-adk, `import resilient_gemini` raises an `ImportError` that says how to install it.
+
+### 4. 🔑 Authenticate and set the environment
 
 ```bash
 gcloud auth application-default login
@@ -101,7 +114,7 @@ export GOOGLE_CLOUD_LOCATION=us
 
 Or copy `examples/my_agent/.env.example` to `.env` next to your agent. `adk run` and `adk web` load it automatically.
 
-### 4. ▶️ Run it once
+### 5. ▶️ Run it once
 
 Quickest check, a single prompt:
 
@@ -118,7 +131,7 @@ adk web examples                 # browser UI, pick "my_agent"
 
 In your own code, change the `model=` line of any `LlmAgent` to `resilient_model()`.
 
-### 5. 🌎 Confirm the US multi-region endpoint (once)
+### 6. 🌎 Confirm the US multi-region endpoint (once)
 
 ```python
 from resilient_gemini import resilient_model
@@ -129,6 +142,75 @@ print(m.primary.api_client._api_client._http_options.base_url)
 ```
 
 This reads a private SDK attribute, so use it for debugging only. If it shows `https://us-aiplatform.googleapis.com/`, upgrade `google-genai`.
+
+### 7. ⚙️ Settings
+
+| Env var | Keyword | Default |
+|---|---|---|
+| `RESILIENT_GEMINI_PRIMARY_MODEL` | `primary_model` | `gemini-3.5-flash` |
+| `RESILIENT_GEMINI_BACKUP_MODEL` | `backup_model` | `gemini-3.6-flash` |
+| `RESILIENT_GEMINI_PRIMARY_THINKING` | `primary_thinking` | model default |
+| `RESILIENT_GEMINI_BACKUP_THINKING` | `backup_thinking` | model default |
+| `RESILIENT_GEMINI_MAX_ATTEMPTS` | `max_attempts` | `5` (total calls to primary) |
+| `RESILIENT_GEMINI_STEP_SECONDS` | `step_seconds` | `60` → waits 60, 120, 180, 240 |
+| `RESILIENT_GEMINI_STEP_JITTER` | `step_jitter` | `0` (adds random 0..N s to each primary wait) |
+| `RESILIENT_GEMINI_PRIMARY_LOCATION` | `primary_location` | unset → `GOOGLE_CLOUD_LOCATION` |
+| `RESILIENT_GEMINI_BACKUP_LOCATION` | `backup_location` | unset → `GOOGLE_CLOUD_LOCATION` |
+| `RESILIENT_GEMINI_BACKUP_ATTEMPTS` | `backup_attempts` | `5` |
+| `RESILIENT_GEMINI_BACKUP_INITIAL_DELAY` | `backup_initial_delay` | `60` |
+| `RESILIENT_GEMINI_BACKUP_EXP_BASE` | `backup_exp_base` | `2` |
+| `RESILIENT_GEMINI_BACKUP_MAX_DELAY` | `backup_max_delay` | `300` |
+| `RESILIENT_GEMINI_BACKUP_JITTER` | `backup_jitter` | `1` (SDK retry jitter) |
+| `RESILIENT_GEMINI_PRIORITY_PAYGO` | *(env var only)* | `off` |
+
+Precedence: keyword arguments > env vars > defaults.
+
+### 8. 💰 Priority PayGo (opt-in, ~2x cost)
+
+Off by default. It can **only** be turned on with an environment variable; passing it in code raises an error.
+
+| Value | Headers sent | Behaviour |
+|---|---|---|
+| unset / `off` | none | Standard PayGo |
+| `priority` | `X-Vertex-AI-LLM-Request-Type: shared` + `X-Vertex-AI-LLM-Shared-Request-Type: priority` | Priority PayGo only, skips Provisioned Throughput |
+| `spillover` | `X-Vertex-AI-LLM-Shared-Request-Type: priority` | Provisioned Throughput first, overflow to Priority PayGo |
+
+Any other value (including `true`) raises an error so nobody pays priority rates by accident.
+
+```bash
+export RESILIENT_GEMINI_PRIORITY_PAYGO=priority
+```
+
+What gets logged:
+
+```
+WARNING resilient_gemini: PRIORITY PAYGO ENABLED via RESILIENT_GEMINI_PRIORITY_PAYGO=priority for gemini-3.5-flash and gemini-3.6-flash. Every request is billed at Priority PayGo rates, ~2x Standard PayGo cost. Headers: {...}
+INFO    resilient_gemini: PRIORITY PAYGO (priority): request to gemini-3.5-flash is billed at Priority PayGo rates, ~2x Standard PayGo cost
+INFO    resilient_gemini: PRIORITY PAYGO: gemini-3.5-flash served at priority (traffic_type=ON_DEMAND_PRIORITY), billed at Priority PayGo rates, ~2x Standard PayGo cost
+WARNING resilient_gemini: PRIORITY PAYGO: gemini-3.5-flash was downgraded to Standard PayGo (traffic_type=ON_DEMAND), billed at the standard rate
+```
+
+Google downgrades a request to Standard PayGo only when there is no spare priority capacity; the response's `traffic_type` tells you which happened. Check the [pricing page](https://cloud.google.com/vertex-ai/generative-ai/pricing) for exact rates per model.
+
+### 9. 📜 Logs
+
+Logger name: `resilient_gemini`.
+
+```
+WARNING resilient_gemini: Primary model gemini-3.5-flash attempt 1/5 failed (503 ...). Retrying in 60s
+ERROR   resilient_gemini: FALLBACK: primary model gemini-3.5-flash failed 5 times (last error: ...). Switching to backup model gemini-3.6-flash (thinking=HIGH)
+INFO    resilient_gemini: FALLBACK: backup model gemini-3.6-flash responded successfully
+```
+
+The fallback record carries `extra` fields (`resilient_gemini_event="fallback"`, `primary_model`, `backup_model`) for log-based alerts in Cloud Logging.
+
+### 10. ⚠️ Things to know
+
+- ⏱️ **Worst case before fallback is about 10 minutes** (60+120+180+240 s, plus up to 4 x `step_jitter`). Your server, load balancer or Agent Engine request timeout must allow that, or lower `max_attempts` / `step_seconds`.
+- 📍 **Per-model location:** set `backup_location` to a different location than the primary (e.g. primary `us`, backup `global`) so fallback also helps when one location is having trouble. Only the location is passed to the SDK. It picks the endpoint itself, with no custom `base_url`. Needs Vertex AI mode.
+- 🌊 **Streaming:** a response that has already started streaming is never retried, so users never see duplicated text.
+- 🧠 **Thinking:** don't also set `planner=BuiltInPlanner(thinking_config=...)`. The wrapper sets thinking per call and would overwrite it.
+- 🧰 **Built-in tools** that require the agent's model to be a `Gemini` instance (for example Google Search grounding) may refuse the wrapper. Put them on a sub-agent with a plain `Gemini` model, or test them first.
 
 ---
 
@@ -261,101 +343,7 @@ git commit -am "Release v0.3.0"
 git tag v0.3.0 && git push && git push --tags
 ```
 
----
+### 5. 📤 Publishing to your team
 
-## ⚙️ Settings
-
-| Env var | Keyword | Default |
-|---|---|---|
-| `RESILIENT_GEMINI_PRIMARY_MODEL` | `primary_model` | `gemini-3.5-flash` |
-| `RESILIENT_GEMINI_BACKUP_MODEL` | `backup_model` | `gemini-3.6-flash` |
-| `RESILIENT_GEMINI_PRIMARY_THINKING` | `primary_thinking` | model default |
-| `RESILIENT_GEMINI_BACKUP_THINKING` | `backup_thinking` | model default |
-| `RESILIENT_GEMINI_MAX_ATTEMPTS` | `max_attempts` | `5` (total calls to primary) |
-| `RESILIENT_GEMINI_STEP_SECONDS` | `step_seconds` | `60` → waits 60, 120, 180, 240 |
-| `RESILIENT_GEMINI_STEP_JITTER` | `step_jitter` | `0` (adds random 0..N s to each primary wait) |
-| `RESILIENT_GEMINI_PRIMARY_LOCATION` | `primary_location` | unset → `GOOGLE_CLOUD_LOCATION` |
-| `RESILIENT_GEMINI_BACKUP_LOCATION` | `backup_location` | unset → `GOOGLE_CLOUD_LOCATION` |
-| `RESILIENT_GEMINI_BACKUP_ATTEMPTS` | `backup_attempts` | `5` |
-| `RESILIENT_GEMINI_BACKUP_INITIAL_DELAY` | `backup_initial_delay` | `60` |
-| `RESILIENT_GEMINI_BACKUP_EXP_BASE` | `backup_exp_base` | `2` |
-| `RESILIENT_GEMINI_BACKUP_MAX_DELAY` | `backup_max_delay` | `300` |
-| `RESILIENT_GEMINI_BACKUP_JITTER` | `backup_jitter` | `1` (SDK retry jitter) |
-| `RESILIENT_GEMINI_PRIORITY_PAYGO` | *(env var only)* | `off` |
-
-Precedence: keyword arguments > env vars > defaults.
-
----
-
-## 💰 Priority PayGo (opt-in, ~2x cost)
-
-Off by default. It can **only** be turned on with an environment variable; passing it in code raises an error.
-
-| Value | Headers sent | Behaviour |
-|---|---|---|
-| unset / `off` | none | Standard PayGo |
-| `priority` | `X-Vertex-AI-LLM-Request-Type: shared` + `X-Vertex-AI-LLM-Shared-Request-Type: priority` | Priority PayGo only, skips Provisioned Throughput |
-| `spillover` | `X-Vertex-AI-LLM-Shared-Request-Type: priority` | Provisioned Throughput first, overflow to Priority PayGo |
-
-Any other value (including `true`) raises an error so nobody pays priority rates by accident.
-
-```bash
-export RESILIENT_GEMINI_PRIORITY_PAYGO=priority
-```
-
-What gets logged:
-
-```
-WARNING resilient_gemini: PRIORITY PAYGO ENABLED via RESILIENT_GEMINI_PRIORITY_PAYGO=priority for gemini-3.5-flash and gemini-3.6-flash. Every request is billed at Priority PayGo rates, ~2x Standard PayGo cost. Headers: {...}
-INFO    resilient_gemini: PRIORITY PAYGO (priority): request to gemini-3.5-flash is billed at Priority PayGo rates, ~2x Standard PayGo cost
-INFO    resilient_gemini: PRIORITY PAYGO: gemini-3.5-flash served at priority (traffic_type=ON_DEMAND_PRIORITY), billed at Priority PayGo rates, ~2x Standard PayGo cost
-WARNING resilient_gemini: PRIORITY PAYGO: gemini-3.5-flash was downgraded to Standard PayGo (traffic_type=ON_DEMAND), billed at the standard rate
-```
-
-Google downgrades a request to Standard PayGo only when there is no spare priority capacity; the response's `traffic_type` tells you which happened. Check the [pricing page](https://cloud.google.com/vertex-ai/generative-ai/pricing) for exact rates per model.
-
----
-
-## 📜 Logs
-
-Logger name: `resilient_gemini`.
-
-```
-WARNING resilient_gemini: Primary model gemini-3.5-flash attempt 1/5 failed (503 ...). Retrying in 60s
-ERROR   resilient_gemini: FALLBACK: primary model gemini-3.5-flash failed 5 times (last error: ...). Switching to backup model gemini-3.6-flash (thinking=HIGH)
-INFO    resilient_gemini: FALLBACK: backup model gemini-3.6-flash responded successfully
-```
-
-The fallback record carries `extra` fields (`resilient_gemini_event="fallback"`, `primary_model`, `backup_model`) for log-based alerts in Cloud Logging.
-
----
-
-## ⚠️ Things to know
-
-- ⏱️ **Worst case before fallback is about 10 minutes** (60+120+180+240 s, plus up to 4 x `step_jitter`). Your server, load balancer or Agent Engine request timeout must allow that, or lower `max_attempts` / `step_seconds`.
-- 📍 **Per-model location:** set `backup_location` to a different location than the primary (e.g. primary `us`, backup `global`) so fallback also helps when one location is having trouble. Only the location is passed to the SDK. It picks the endpoint itself, with no custom `base_url`. Needs Vertex AI mode.
-- 🌊 **Streaming:** a response that has already started streaming is never retried, so users never see duplicated text.
-- 🧠 **Thinking:** don't also set `planner=BuiltInPlanner(thinking_config=...)`. The wrapper sets thinking per call and would overwrite it.
-- 🧰 **Built-in tools** that require the agent's model to be a `Gemini` instance (for example Google Search grounding) may refuse the wrapper. Put them on a sub-agent with a plain `Gemini` model, or test them first.
-
----
-
-## 📤 Publishing to your team
-
-**Option A — Git tag (simplest).** Push to an internal repo and tag releases (see "Release"). Teams install with the `git+https://...@vX.Y.Z` line.
-
-**Option B — Artifact Registry.** One-time:
-
-```bash
-gcloud artifacts repositories create python-libs --repository-format=python --location=us
-```
-
-Each release:
-
-```bash
-uv build
-uv publish --publish-url https://us-python.pkg.dev/YOUR_PROJECT/python-libs/ \
-  --username oauth2accesstoken --password "$(gcloud auth print-access-token)"
-```
-
-Consumers need `roles/artifactregistry.reader` on the repo.
+Push to an internal Git repo and tag each release (see "Release" above). Teams install with
+the `git+https://...@vX.Y.Z` line from Part 1.
